@@ -1,0 +1,79 @@
+#this one is mine 
+image: node:latest
+
+
+#1
+stages: 
+  - Build
+  - Test
+  - Dockerize
+  - Deploy
+  
+cache:
+  paths:
+    - node_modules/
+
+#2
+build_job: 
+  stage: Build
+  script:
+    - npm install
+  artifacts:
+    paths:
+      - node_modules/
+
+#3
+test_job:
+  stage: Test
+  script: npm test
+
+  artifacts:
+    paths:
+      - ./
+
+
+
+#4 
+dockerize_job :
+  stage : Dockerize
+  image: docker:git 
+  services: 
+     - docker:dind 
+  variables: 
+    DOCKER_DRIVER: overlay 
+    IMAGE_NAME: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG 
+    IMAGE_TAG:  ${CI_COMMIT_REF_SLUG} 
+  before_script: 
+     - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY 
+  script: 
+     - docker build --tag=$IMAGE_TAG . --pull -t $IMAGE_NAME 
+     - docker push $IMAGE_NAME 
+  only: 
+     - master 
+
+
+#5 do not touch
+deploy_job :
+   stage : Deploy
+   image: docker:latest
+   services:
+     - docker:dind
+   variables:
+    DOCKER_DRIVER: overlay 
+    IMAGE_NAME: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG #Nom du repository:branche
+   before_script:
+     - mkdir -p ~/.ssh
+     - echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+     - chmod 600 ~/.ssh/id_rsa
+     - eval "$(ssh-agent -s)"
+     - ssh-add ~/.ssh/id_rsa
+     - ssh-keyscan -H $DEPLOYMENT_SERVER_IP >> ~/.ssh/known_hosts
+   script:
+     - ssh workinglab@$DEPLOYMENT_SERVER_IP "docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY"  
+     - ssh workinglab@$DEPLOYMENT_SERVER_IP "docker stop react-app" || true
+     - ssh workinglab@$DEPLOYMENT_SERVER_IP "docker rm react-app" || true
+     - ssh workinglab@$DEPLOYMENT_SERVER_IP "docker rmi -f ${IMAGE_NAME}" || true
+     - ssh workinglab@$DEPLOYMENT_SERVER_IP "docker  run --name react-app --publish 3000:3000 --detach -dti ${IMAGE_NAME}"
+   only:
+     - master
+
